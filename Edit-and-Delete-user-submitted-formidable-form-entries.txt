@@ -1,0 +1,349 @@
+<?php
+add_action("init","update_formible_form_data");
+function update_formible_form_data(){
+  
+  $fmname = 'frm_update_entry_' . $_POST['form_id'];
+   if(isset($_POST['form_action'])){
+     if ( ! isset( $_POST[$fmname] ) || ! wp_verify_nonce( $_POST[$fmname], 'formidable_action' ) ) {
+               print 'Sorry, your nonce did not verify.';
+               exit;
+             } else {               
+              global $wpdb;
+              $item_table = $wpdb->prefix.'frm_items';
+              $item_meta = $wpdb->prefix.'frm_item_metas';
+
+              $item_id = base64_decode($_GET['entry_id']);
+
+              // update data into item table
+              
+              $meta_ext_data = reset($_POST['item_meta']); // set pointer to first position
+              
+              if(is_array($meta_ext_data))
+                  $item_data['name'] = $meta_ext_data[0];
+              else
+                  $item_data['name'] = $meta_ext_data; 
+  
+              $where_item['id']  = $item_id;
+              $wpdb->update($item_table, $item_data, $where_item, $format=null, $where_format=null); 
+
+              // update data into item meta table
+                 
+              foreach($_POST['item_meta'] as $itm_key => $itmt){                   
+                   if(is_array($itmt))
+                     $meta_value = serialize($itmt);
+                    else
+                     $meta_value = $itmt;
+
+                   if(check_entry_record($item_id,$itm_key)){
+                       $where['item_id']    = $item_id;
+                       $where['field_id']   = $itm_key;
+                       $mdata['meta_value'] = $meta_value;
+                       $wpdb->update($item_meta, $mdata, $where, $format=null, $where_format=null);  
+                   }else{ 
+                       $idata['meta_value'] = $meta_value;
+                       $idata['field_id']   = $itm_key;
+                       $idata['item_id']    = $item_id;
+                       $idata['created_at'] = current_time('mysql');
+                       $wpdb->insert($item_meta,$idata,$format=null);  
+                   }                        
+              }
+              unset($mdata);
+              unset($idata);
+              wp_redirect(get_permalink(get_option("user-info")));
+              exit;
+          }
+    }
+
+    $user_page = get_page_by_title( 'Users Info' );
+
+    if(!$user_page->ID){
+      $args = array(
+          'post_title'=>'Users Info',
+          'post_content'=>'[user-info]',
+          'post_status'=>'publish',
+          'post_type'=>'page'
+      );
+      $post_id = wp_insert_post($args);
+      update_option("user-info",$post_id);
+    }
+
+    $edit_page = get_page_by_title( 'Edit Form' );
+
+    if(!$edit_page->ID){
+      $args = array(
+          'post_title'=>'Edit Form',
+          'post_content'=>'[edit-info]',
+          'post_status'=>'publish',
+          'post_type'=>'page'
+      );
+      $post_id = wp_insert_post($args);
+      update_option("edit-info",$post_id);
+    }
+
+   if(isset($_GET['evt']) && isset($_GET['delete'])){
+       global $wpdb;
+        $item_table = $wpdb->prefix.'frm_items';
+        $item_meta = $wpdb->prefix.'frm_item_metas';
+
+        $dlwhere['id'] = base64_decode($_GET['evt']);
+        $itwhere['item_id'] = base64_decode($_GET['evt']);
+        $wpdb->delete($item_table,$dlwhere,$dlwh_format=null); 
+        $wpdb->delete($item_meta,$itwhere,$itwh_format=null); 
+
+        wp_redirect(add_query_arg("sc","te",get_permalink(get_option("user-info"))));
+        exit;
+   } 
+
+}
+
+add_shortcode('user-info', 'display_user_submitted_form_entries');
+ 
+function display_user_submitted_form_entries() { 
+  ob_start();
+     global $current_user;
+     $user_id = $current_user->ID;
+       
+       if(!is_user_logged_in()){
+          wp_redirect(trailingslashit(get_site_url(1)).'wp-login.php?redirect_to='.urlencode(get_permalink(get_option("user-info"))));
+             exit;
+        }  
+
+       if(isset($_GET['ed'])){
+         $info_details = get_user_submitted_info_detail();                  
+            
+            $output = '<div id="answer-listing" class="user-answers">';
+            $output .= '<a href="'.get_permalink().'">&larr;Back</a>';
+            $output .= '<table class="wp-list-table widefat fixed striped formidable_page_formidable-entries">';
+              $output .= '<thead>';
+               $output .= '<tr>                        
+                              <th>Name</th>
+                              <th>Info</th>
+                            </tr>';
+              $output .= '</thead>';
+              
+              $output .= '<tbody id="the-list">'; 
+              if(is_array($info_details) && count($info_details) > 0){ 
+                  foreach($info_details as $detail){ 
+                      if(is_array(unserialize($detail->meta_value)))
+                        $info = implode(", ",unserialize($detail->meta_value));
+                      else
+                        $info = $detail->meta_value;
+
+                        $output .= '<tr class="row-info">';
+                          $output .= '<td>'.get_form_field_info($detail->field_id).'</td>';
+                          $output .= '<td>'.stripslashes($info).'</td>';
+                        $output .= '</tr>';
+                   } 
+              }else{
+                   $output .= '<tr class="row-info">';
+                          $output .= '<td colspan="2">There are no entry exist.</td>';                          
+                   $output .= '</tr>'; 
+              }     
+              $output .= '</tbody>';          
+
+             $output .= '</table>';          
+          $output .= '</div>';   
+       }else{
+        $user_info = get_user_submitted_info($user_id);    
+            
+        $output = '<div id="answer-listing" class="user-answers">';
+        if(isset($_GET['sc'])){
+          $output .= '<div class="frm_forms with_frm_style frm_style_formidable-style"><div class="frm_message"><p>Entry deleted successfully!</p></div></div>';
+        }
+        $output .= '<table class="wp-list-table widefat fixed striped formidable_page_formidable-entries">';
+          $output .= '<thead>';
+           $output .= '<tr>                        
+                          <th>Info</th>
+                          <th>Form</th>
+                          <th>Date</th>
+                        </tr>';
+          $output .= '</thead>';
+          
+          $output .= '<tbody id="the-list">';  
+          if(is_array($user_info) && count($user_info) > 0){ 
+              foreach($user_info as $info){ 
+                  $output .= '<tr class="row-info">';
+                    $output .= '<td><a href="">'.stripslashes($info->name).'</a>';
+                    $output .= '<div class="actions" style="visibility:hidden;">';
+                    $output .= '<span><a href="'.add_query_arg('ed',$info->id,get_permalink(get_option("user-info"))).'">View</a></span> || ';
+                    $output .= '<span><a href="'.add_query_arg(array('entry_id'=>base64_encode($info->id),'fm_id'=>base64_encode($info->form_id)),get_permalink(get_option("edit-info"))).'">Edit</a></span> || ';
+                    $output .= '<span><a href="'.add_query_arg(array('evt'=>base64_encode($info->id),'delete'=>'true'),get_permalink(get_option("user-info"))).'" onclick="return confirm(\'Are you sure?\');">Delete</a></span>';
+                    $output .= '</div>';
+                    $output .= '</td>';
+                    $output .= '<td>'.get_form_info($info->form_id).'</td>';
+                    $output .= '<td>'.$info->created_at.'</td>';
+                  $output .= '</tr>';
+               } 
+          }else{
+                   $output .= '<tr class="row-info">';
+                          $output .= '<td colspan="3">There are no entry exist.</td>';                          
+                   $output .= '</tr>'; 
+          }          
+          $output .= '</tbody>';          
+
+         $output .= '</table>';          
+      $output .= '</div>';
+      $output .= '<script type="text/javascript">jQuery(document).ready(function($){$(".row-info").hover(function(){$(this).find(".actions").css("visibility", "visible");},function(){$(this).find(".actions").css("visibility", "hidden");}); });</script>';  
+      }   
+      return $output.ob_get_clean();
+} 
+
+function display_user_edit_info(){
+  $form_id = base64_decode($_GET['fm_id']);
+  return "[formidable id=$form_id]";
+}
+
+function get_user_submitted_info($user_id){
+  global $wpdb;
+  $item_table = $wpdb->prefix.'frm_items';
+  $results = $wpdb->get_results("select * from $item_table where user_id=$user_id");
+  return $results;
+}
+
+function get_user_submitted_info_detail(){
+  global $wpdb;
+  $item_meta = $wpdb->prefix.'frm_item_metas';
+  $entry_id  = $_GET['ed'];
+  $results   = $wpdb->get_results("select * from $item_meta where item_id=$entry_id");
+  return $results;
+}
+
+function get_form_field_info($field_id){
+  global $wpdb;
+  $form_fields = $wpdb->prefix.'frm_fields';
+  $result = $wpdb->get_row("select name from $form_fields where id=$field_id");
+  if(isset($result->name))
+  return $result->name;
+}
+
+function get_form_info($form_id){
+  global $wpdb;
+  $form_table = $wpdb->prefix.'frm_forms';
+  $result = $wpdb->get_row("select name from $form_table where id=$form_id");
+  if(isset($result->name))
+  return $result->name;
+}
+
+function display_update_button(){
+ $output  = '<div class="frm_update">';
+ $output .=   '<input class="frm_button_update" name="form_action" type="submit" value="Update">';
+ $output .= '</div>';
+ return $output;
+}
+
+
+function get_user_submitted_info_by_eid($eid,$fid){
+  global $wpdb;
+  $item_meta = $wpdb->prefix.'frm_item_metas';
+  $results   = $wpdb->get_row("select meta_value from $item_meta where item_id=$eid and field_id=$fid");
+  return $results->meta_value;
+}
+
+function check_entry_record($eid,$fid){
+  global $wpdb;
+  $item_meta = $wpdb->prefix.'frm_item_metas';
+  $result   = $wpdb->get_row("select id from $item_meta where item_id=$eid and field_id=$fid");
+  return $result->id;
+}
+
+
+add_shortcode('edit-info','display_edit_formidable_form');
+
+function display_edit_formidable_form(){
+   global $wpdb;
+   $form_fields   = $wpdb->prefix.'frm_fields';
+   $fid = base64_decode($_GET['fm_id']);
+   $field_results = $wpdb->get_results("select * from $form_fields where form_id=$fid order by field_order");
+   
+   $basic_fields = array('text','email','number','phone','url');
+   $entry_id = base64_decode($_GET['entry_id']);
+
+   $output = '<div class="frm_forms  with_frm_style frm_style_formidable-style" id="frm_form_2_container">';
+   $output .= '<form name="edit-form" method="post" enctype="multipart/form-data" class="frm-edit-form ">';
+   $output .= '<div class="frm_form_fields"><fieldset>';
+   $output .= '<div class="frm_fields_container">';
+   foreach($field_results as $field_result){
+          $field_options = unserialize($field_result->field_options);
+       if( in_array($field_result->type, $basic_fields) ){          
+          $output .= '<div id="frm_field_'.$field_result->id.'_container" class="frm_form_field form-field  frm_top_container '.$field_options['classes'].'">';
+          $output .= '<label for="field_'.$field_result->field_key.'" id="field_'.$field_result->field_key.'_label" class="frm_primary_label">'.$field_result->name.'<span class="frm_required"></span></label>';
+           $output .= '<input type="'.$field_result->type.'" name="item_meta['.$field_result->id.']" value="'.stripslashes(get_user_submitted_info_by_eid($entry_id,$field_result->id)).'" />';
+           $output .= '</div>';
+        }
+        if($field_result->type == 'select'){
+          $options = unserialize($field_result->options);
+           $output .= '<div id="frm_field_'.$field_result->id.'_container" class="frm_form_field form-field  frm_top_container '.$field_options['classes'].'">';
+          $output .= '<label for="field_'.$field_result->field_key.'" id="field_'.$field_result->field_key.'_label" class="frm_primary_label">'.$field_result->name.'<span class="frm_required"></span></label>';
+           $output .= '<select name="item_meta['.$field_result->id.']">';
+           $selected_value = get_user_submitted_info_by_eid($entry_id,$field_result->id);
+           foreach($options as $option){
+            if($selected_value == $option['value'])
+             $output .= '<option value="'.$option['value'].'" selected="selected">'.$option['label'].'</option>';
+           else
+             $output .= '<option value="'.$option['value'].'">'.$option['label'].'</option>';
+            } 
+           $output .= '</select>';
+           $output .= '</div>';
+        }
+
+        if($field_result->type == 'radio'){         
+          $radio_values = unserialize($field_result->options);
+           $output .= '<div id="frm_field_'.$field_result->id.'_container" class="frm_form_field form-field  frm_top_container '.$field_options['classes'].'">';
+           $output .= '<div id="field_'.$field_result->field_key.'_label" class="frm_primary_label">'.$field_result->name.'<span class="frm_required"></span>';
+            $output .= '</div>';
+           $output .= '<div class="frm_opt_container" aria-labelledby="field_'.$field_result->field_key.'_label" role="group">';
+           $selected_radio = get_user_submitted_info_by_eid($entry_id,$field_result->id);
+          foreach($radio_values as $rkey => $radio_value){
+            if($radio_value['value'] == $selected_radio)
+              $selected = 'checked';
+            else
+              $selected = '';
+
+             $output .= '<div class="frm_radio" id="frm_radio_'.$field_result->id.'-'.$rkey.'">';
+             $output .= '<label for="field_'.$field_result->field_key.'">';            
+             $output .= '<input type="radio" name="item_meta['.$field_result->id.']" id="field_'.$field_result->field_key.'-'.$rkey.'" value="'.$radio_value['value'].'" '.$selected.' >'.$radio_value['label'].'</label>';          
+             $output .= '</div>';
+          }
+          $output .= '</div>';
+          $output .= '</div>';
+        }
+
+         if($field_result->type == 'checkbox'){         
+          $checkbox_values = unserialize($field_result->options);
+           $output .= '<div id="frm_field_'.$field_result->id.'_container" class="frm_form_field form-field  frm_top_container '.$field_options['classes'].'">';
+           $output .= '<div id="field_'.$field_result->field_key.'_label" class="frm_primary_label">'.$field_result->name.'<span class="frm_required"></span>';
+            $output .= '</div>';
+           $output .= '<div class="frm_opt_container" aria-labelledby="field_'.$field_result->field_key.'_label" role="group">';
+           $selected_checkbox = unserialize(get_user_submitted_info_by_eid($entry_id,$field_result->id));
+          foreach($checkbox_values as $ckey => $checkbox_value){
+            if(in_array($checkbox_value['value'], $selected_checkbox))
+              $selected = 'checked';
+            else
+              $selected = '';
+
+             $output .= '<div class="frm_'.$field_result->type.'" id="frm_'.$field_result->type.'_'.$field_result->id.'-'.$ckey.'">';
+             $output .= '<label for="field_'.$field_result->field_key.'">';            
+             $output .= '<input type="'.$field_result->type.'" name="item_meta['.$field_result->id.'][]" id="field_'.$field_result->field_key.'-'.$ckey.'" value="'.$checkbox_value['value'].'" '.$selected.' >'.$checkbox_value['label'].'</label>';          
+             $output .= '</div>';
+          }
+          $output .= '</div>';
+          $output .= '</div>';
+        }
+
+        if( $field_result->type == 'textarea' ){          
+          $output .= '<div id="frm_field_'.$field_result->id.'_container" class="frm_form_field form-field  frm_top_container '.$field_options['classes'].'">';
+          $output .= '<label for="field_'.$field_result->field_key.'" id="field_'.$field_result->field_key.'_label" class="frm_primary_label">'.$field_result->name.'<span class="frm_required"></span></label>';
+           $output .= '<textarea name="item_meta['.$field_result->id.']" id="field_'.$field_result->field_key.'" rows="5">'.get_user_submitted_info_by_eid($entry_id,$field_result->id).'</textarea>';
+           $output .= '</div>';
+        }
+
+   }
+   $output .= wp_nonce_field( 'formidable_action', 'frm_update_entry_'.$fid );
+   $output .= '<input type="hidden" name="form_id" value="'.$fid.'" >';
+   $output .= display_update_button();
+   $output .= '</div>';
+   $output .= '</fieldset></div>';
+   $output .= '</form>';
+   $output .= '</div>';
+   return $output;
+}
